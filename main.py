@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -704,9 +705,13 @@ if __name__ == "__main__":
     publish_to_metaculus = True
     print_startup_banner(run_mode, will_publish=publish_to_metaculus)
 
-    # Configure the bot. The `llms=` block below is commented out to use
-    # whichever default models forecasting-tools picks based on your env vars;
-    # uncomment and edit to pin specific models.
+    # True when AskNews credentials are present (empty GitHub secrets arrive as "").
+    ASKNEWS_READY = bool(
+        (os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"))
+        or os.getenv("ASKNEWS_API_KEY")
+    )
+
+    # Configure the bot. Models are pinned in the `llms=` block below.
     template_bot = FallTemplateBot2026(
         research_reports_per_question=1,
         predictions_per_research_report=5,
@@ -715,17 +720,30 @@ if __name__ == "__main__":
         folder_to_save_reports_to=None,
         skip_previously_forecasted_questions=True,
         extra_metadata_in_explanation=True,
-        # llms={
-        #     "default": GeneralLlm(
-        #         model="openrouter/openai/gpt-4o",
-        #         temperature=0.3,
-        #         timeout=40,
-        #         allowed_tries=2,
-        #     ),
-        #     "summarizer": "openai/gpt-4o-mini",
-        #     "researcher": "asknews/news-summaries",
-        #     "parser": "openai/gpt-4o-mini",
-        # },
+        # --- Settings changed from the template (3 Oct 2026) ---------------------
+        # Forecasting model: the settings Metaculus uses for its own Gemini 3.8 Flash
+        # template bot (forecasting-tools run_bots.py, 2 Oct 2026).
+        # News research: AskNews once its keys are set as secrets; until then,
+        # Google search through OpenRouter.
+        llms={
+            "default": GeneralLlm(
+                model="openrouter/google/gemini-3.8-flash",
+                temperature=None,
+                timeout=5 * 60,
+            ),
+            "summarizer": "openrouter/openai/gpt-4.1-mini",
+            "researcher": (
+                "asknews/news-summaries"
+                if ASKNEWS_READY
+                else GeneralLlm(
+                    model="openrouter/google/gemini-3.8-flash:online",
+                    temperature=None,
+                    timeout=5 * 60,
+                )
+            ),
+            "parser": "openrouter/openai/gpt-4.1-mini",
+        },
+        # ------------------------------------------------------------------------
     )
 
     # Per-mode tournament URL shown in the summary banner footer. These
@@ -747,11 +765,15 @@ if __name__ == "__main__":
                 client.CURRENT_AI_COMPETITION_ID, return_exceptions=True
             )
         )
-        minibench_reports = asyncio.run(
-            template_bot.forecast_on_tournament(
-                client.CURRENT_MINIBENCH_ID, return_exceptions=True
-            )
-        )
+        # MiniBench is switched off (3 Oct 2026): in the 7 Sep 2026 round it paid only
+        # its top 10 bots, and running it would use up the free AskNews allowance.
+        # To switch it back on, restore:
+        #   minibench_reports = asyncio.run(
+        #       template_bot.forecast_on_tournament(
+        #           client.CURRENT_MINIBENCH_ID, return_exceptions=True
+        #       )
+        #   )
+        minibench_reports = []
         forecast_reports = seasonal_tournament_reports + minibench_reports
     elif run_mode == "metaculus_cup":
         # The Metaculus Cup may be uninitialized near the start of a season
